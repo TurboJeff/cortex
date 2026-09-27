@@ -47,49 +47,40 @@ const (
 const (
 	brightCyan  = "\033[96m"
 	brightGreen = "\033[92m"
-	// blinkBrightCyan pairs the thinking color with SGR 5 (blink). Unlike the
-	// rejected spinner-frame approach, this asks the terminal emulator itself
-	// to animate — it's still one static escape sequence baked into the same
-	// glyph string phaseGlyph always returned, applied once per redraw exactly
-	// like color already is. There is no ticker advancing frames and nothing
-	// here calls SetPrompt/SetActivity more often than the phase actually
-	// changes, so it can't reintroduce the missing-erase redraw bug that
-	// SetPrompt's per-tick pulse hit earlier. Terminal support varies (most
-	// GUI emulators honor it; a handful ignore it and just render static
-	// bright cyan — a harmless fallback either way); NO_COLOR strips it along
-	// with everything else via withColor.
-	blinkBrightCyan = "\033[5;96m"
 )
 
-// phaseGlyph renders the state light: a single character whose shape (not
-// just its color) carries the state, so it still reads under NO_COLOR. A
-// dot filling in with activity — hollow idle, half thinking (blinking —
-// terminal-native SGR 5, see blinkBrightCyan), solid streaming (○◐●,
-// U+25CB/25D0/25CF) — the classic status-light idiom. A deliberate departure
-// from the REPL's otherwise-ASCII typography (the 2026-07-19 sweep:
-// middot→pipe, ellipsis→..., arrows→ASCII): still one fixed character, still
-// no application-driven animation frames — the shape never cycles, only the
-// caller-driven state changes it — but not 7-bit ASCII. Worth a callout in
-// the upstream PR for exactly that reason.
+// phaseGlyph renders the state light: one static ASCII character whose shape
+// (not just its color) carries the state, so it still reads under NO_COLOR —
+// "." idle, "*" thinking (reasoning or a running tool), "~" streaming. Plain
+// 7-bit ASCII with no blink or animation frames, per the REPL's plain-text
+// typography (the 2026-07-19 sweep); only the caller-driven phase changes it.
+// "~" rather than ">" for streaming so it can't be mistaken for promptGlyph.
 func phaseGlyph(p turnPhase) string {
 	switch p {
 	case phaseThinking:
-		return withColor("◐", blinkBrightCyan)
+		return withColor("*", brightCyan)
 	case phaseStreaming:
-		return withColor("●", brightGreen)
+		return withColor("~", brightGreen)
 	default:
-		return withColor("○", gray)
+		return withColor(".", gray)
 	}
 }
 
-// setPhase updates the state light and, while a turn is anchored, forces an
-// immediate redraw so the change is visible the instant it happens rather
-// than waiting for the next unrelated SetPrompt call.
-func (cs *CortexSession) setPhase(p turnPhase) {
+// setPhase updates the state light and, while a turn is anchored, redraws the
+// prompt so the change shows immediately. It is a no-op when the phase is
+// unchanged: the streaming status callback fires on every one-second tick and
+// every reasoning chunk, and redrawing the whole prompt for each of those
+// would repaint the bar continuously for no visible change. Reports whether
+// the phase changed.
+func (cs *CortexSession) setPhase(p turnPhase) bool {
+	if cs.phase == p {
+		return false
+	}
 	cs.phase = p
 	if cs.live != nil {
 		cs.live.SetPrompt(cs.Prompt())
 	}
+	return true
 }
 
 func (cs *CortexSession) Prompt() string {

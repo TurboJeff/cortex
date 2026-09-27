@@ -348,9 +348,9 @@ func TestPhaseGlyph(t *testing.T) {
 		phase turnPhase
 		want  string
 	}{
-		{phaseIdle, "○"},
-		{phaseThinking, "◐"},
-		{phaseStreaming, "●"},
+		{phaseIdle, "."},
+		{phaseThinking, "*"},
+		{phaseStreaming, "~"},
 	}
 	for _, tt := range tests {
 		got := stripANSI(phaseGlyph(tt.phase))
@@ -369,16 +369,16 @@ func TestPromptReflectsPhase(t *testing.T) {
 	sess := &CortexSession{Request: CortexArgs{}.Request()}
 
 	sess.phase = phaseIdle
-	if got := sess.Prompt(); !strings.HasPrefix(got, withColor("○", gray)) {
-		t.Errorf("idle Prompt() = %q, want to start with the dim gray ○", got)
+	if got := sess.Prompt(); !strings.HasPrefix(got, withColor(".", gray)) {
+		t.Errorf("idle Prompt() = %q, want to start with the dim gray .", got)
 	}
 	sess.phase = phaseThinking
-	if got := sess.Prompt(); !strings.HasPrefix(got, withColor("◐", blinkBrightCyan)) {
-		t.Errorf("thinking Prompt() = %q, want to start with the blinking bright cyan ◐", got)
+	if got := sess.Prompt(); !strings.HasPrefix(got, withColor("*", brightCyan)) {
+		t.Errorf("thinking Prompt() = %q, want to start with the bright cyan *", got)
 	}
 	sess.phase = phaseStreaming
-	if got := sess.Prompt(); !strings.HasPrefix(got, withColor("●", brightGreen)) {
-		t.Errorf("streaming Prompt() = %q, want to start with the bright green ●", got)
+	if got := sess.Prompt(); !strings.HasPrefix(got, withColor("~", brightGreen)) {
+		t.Errorf("streaming Prompt() = %q, want to start with the bright green ~", got)
 	}
 }
 
@@ -397,6 +397,30 @@ func TestSetPhaseUpdatesFieldWithoutLive(t *testing.T) {
 	sess.setPhase(phaseIdle)
 	if sess.phase != phaseIdle {
 		t.Errorf("phase = %v, want phaseIdle", sess.phase)
+	}
+}
+
+// TestSetPhaseSkipsUnchangedPhase pins the redraw gate: the streaming status
+// callback calls setPhase(phaseThinking) on every tick and reasoning chunk, so
+// only an actual change may redraw the prompt.
+func TestSetPhaseSkipsUnchangedPhase(t *testing.T) {
+	sess := &CortexSession{Request: CortexArgs{}.Request()}
+	steps := []struct {
+		phase turnPhase
+		want  bool
+	}{
+		{phaseThinking, true},
+		{phaseThinking, false},
+		{phaseThinking, false},
+		{phaseStreaming, true},
+		{phaseStreaming, false},
+		{phaseIdle, true},
+		{phaseIdle, false},
+	}
+	for i, st := range steps {
+		if got := sess.setPhase(st.phase); got != st.want {
+			t.Errorf("step %d: setPhase(%v) changed = %v, want %v", i, st.phase, got, st.want)
+		}
 	}
 }
 

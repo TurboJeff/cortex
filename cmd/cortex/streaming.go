@@ -462,8 +462,8 @@ func (cs *CortexSession) send(ctx context.Context) (res *AgentResponse, streamed
 		cs.live.SetThinking(true, "")
 		// Wrap the anchor's own SetThinking so the state light tracks the same
 		// on/off transition: on -> thinking (reasoning), off -> streaming (the
-		// answer has started, or a tool-call-only step is falling through to
-		// finalize). setPhase force-redraws Prompt() immediately.
+		// answer has started). This fires on every tick and reasoning chunk;
+		// setPhase only redraws the prompt when the phase actually changes.
 		onStatus := func(on bool, tail string) {
 			if on {
 				cs.setPhase(phaseThinking)
