@@ -556,6 +556,49 @@ func TestFinalizeLoopUnclampedEmptyWithNoCandidateReturnsEmpty(t *testing.T) {
 	}
 }
 
+// TestRunLoopRestoresToolsAfterFailedEmptySalvage: the salvage re-ask withholds
+// tools; when it also comes back empty, runLoop must still hand the caller's
+// long-lived request back with its tools, or the coder's next turn runs with
+// none. It must also label the turn empty-finalize, not clean-finalize.
+func TestRunLoopRestoresToolsAfterFailedEmptySalvage(t *testing.T) {
+	req := &AgentRequest{Model: "m", Messages: []Message{{Role: RoleSystem, Content: "s"}}}
+	appendMsg := func(m Message) { req.Messages = append(req.Messages, m) }
+	send := SenderFunc(func(context.Context, *AgentRequest) (*AgentResponse, bool, error) {
+		return fakeResp("", nil, 1, 5), false, nil // always empty, never clamped
+	})
+	disp := DispatchFunc(func(context.Context, ToolCall) string { return "obs" })
+	ts := Toolset{Tools: []Tool{tools.ReadFile}, Dispatch: disp}
+	req.Tools = ts.Tools
+	content, stats, err := runLoop(context.Background(), send, req, ts,
+		Bounds{MaxTokens: 100, MaxIter: 3}, nil, appendMsg, nil)
+	if err != nil {
+		t.Fatalf("runLoop: %v", err)
+	}
+	if content != "" || stats.StopReason != "empty-finalize" {
+		t.Errorf("content=%q stop=%q, want empty/empty-finalize", content, stats.StopReason)
+	}
+	if len(req.Tools) != len(ts.Tools) {
+		t.Errorf("req.Tools = %d tools after failed salvage, want %d restored", len(req.Tools), len(ts.Tools))
+	}
+}
+
+// TestReFinalizePromptIsHonest pins the salvage ask's wording: it now fires on
+// every empty finish (not just clamped ones), so it must not assert a cause
+// that may be false, and it must carry the same honesty clause as
+// rewriteClampedPrompt so an unfinished coding turn isn't narrated as done.
+func TestReFinalizePromptIsHonest(t *testing.T) {
+	for _, want := range []string{"Describe only what you actually completed", "unfinished"} {
+		if !strings.Contains(reFinalizePrompt, want) {
+			t.Errorf("reFinalizePrompt missing %q: %q", want, reFinalizePrompt)
+		}
+	}
+	for _, banned := range []string{"everything you need", "whole budget thinking"} {
+		if strings.Contains(reFinalizePrompt, banned) {
+			t.Errorf("reFinalizePrompt still asserts %q: %q", banned, reFinalizePrompt)
+		}
+	}
+}
+
 // TestRunLoopDetectsStuckErrorLoop reproduces the live coder hang: the model
 // alternates a no-op edit (always "Error: …identical; nothing to change") with a
 // read (always succeeds). The byte-identical no-progress guard only sees

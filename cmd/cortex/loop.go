@@ -92,11 +92,12 @@ type loopStats struct {
 	MaxTokensClamped bool // any request hit Bounds.MaxTokens (runaway tripwire)
 	Salvaged         bool // an empty clamped finish was recovered by one terse re-ask
 	// SalvagedUnclamped: recovered from empty WITHOUT MaxTokensClamped — the
-	// model just stopped with nothing, not a budget-burn spiral. Both share
-	// StopReason "salvaged-finalize"; this is the field that tells them apart.
+	// model just stopped with nothing, not a budget-burn spiral. Set by either
+	// salvage (the re-ask or the observation fallback). Both share StopReason
+	// "salvaged-finalize"; this is the field that tells them apart.
 	SalvagedUnclamped bool
 	Iterations        int    // model rounds consumed
-	StopReason        string // clean-finalize|salvaged-finalize|max-iter|read-budget|no-progress|deadline|error
+	StopReason        string // clean-finalize|salvaged-finalize|empty-finalize|max-iter|read-budget|no-progress|deadline|error
 	FinalizeForced    bool   // answered because a bound dragged finalize out
 
 	Outlines  int
@@ -226,11 +227,16 @@ func finalizePromptFor(stop string, style FinalizeStyle) string {
 	}
 }
 
-// reFinalizePrompt is the salvage ask when the first finalize came back EMPTY — a
-// reasoning model that spent its whole completion budget deliberating and emitted
-// no answer (the max-tokens-clamp signature). It re-asks with a hard brevity floor
-// so the model spends its budget on the answer, not the deliberation.
-const reFinalizePrompt = "Your previous reply was empty — you spent the whole budget thinking and never answered. You already have everything you need. Do NOT deliberate further: state the answer NOW, directly, in at most five sentences."
+// reFinalizePrompt is the salvage ask when a finish came back EMPTY. That can
+// be a reasoning model that spent its whole completion budget deliberating
+// (the max-tokens clamp), or a model that simply stopped with nothing (a
+// hybrid-reasoning answer landing in a channel the blocking path never
+// parses). The wording is cause-neutral because either can be true, and it
+// carries the same honesty clause as rewriteClampedPrompt: an empty finish on
+// a coding turn often means the work is unfinished, and "state the answer
+// now" without that clause invites the model to narrate the goal as done (the
+// 2026-08-07 polyglot confabulation).
+const reFinalizePrompt = "Your previous reply was empty. Without calling tools, give your final answer now in at most five sentences. Describe only what you actually completed — if any of the work is unfinished, say so plainly rather than presenting it as done."
 
 // rewriteClampedPrompt is the salvage ask when a model DID answer, but only by
 // running into the completion ceiling. That answer is usually verbose and fails
@@ -370,6 +376,15 @@ func runLoop(ctx context.Context, send Sender, req *AgentRequest, ts Toolset, b 
 					req.Tools = ts.Tools
 					return a2, stats, nil
 				}
+			}
+			// A failed salvage leaves the tools withheld; restore them so the
+			// caller's long-lived request (cs.Request) keeps its tools next turn.
+			req.Tools = ts.Tools
+			if answer == "" {
+				// Nothing salvageable: say so rather than passing an empty turn
+				// off as a clean finish.
+				stats.StopReason = "empty-finalize"
+				return "", stats, nil
 			}
 			stats.StopReason = "clean-finalize"
 			return answer, stats, nil

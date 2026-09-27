@@ -190,22 +190,5 @@ func (cs *CortexSession) turn(ctx context.Context, input string, progress Progre
 	turnMsgs := cs.Request.Messages[turnStart:]
 	cs.captureTurn(input, turnMsgs)
 
-	// content is runLoop's own answer, already salvage-checked; use it first.
-	// lastAssistantText is a last-resort fallback only, for when runLoop's own
-	// salvage also came back empty.
-	reply := content
-	if reply == "" {
-		reply = lastAssistantText(turnMsgs)
-	}
-	return TurnResult{Reply: reply, StopReason: stats.StopReason}, nil
-}
-
-func lastAssistantText(turnMsgs []Message) string {
-	for i := len(turnMsgs) - 1; i >= 0; i-- {
-		m := turnMsgs[i]
-		if m.Role == "assistant" && strings.TrimSpace(m.Content) != "" {
-			return m.Content
-		}
-	}
-	return ""
+	return TurnResult{Reply: content, StopReason: stats.StopReason}, nil
 }
